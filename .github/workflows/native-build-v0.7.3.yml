@@ -1,0 +1,111 @@
+name: Build BonBazaar Windows and Android
+
+on:
+  push:
+    branches:
+      - release/native-v0.7.3
+
+jobs:
+  windows:
+    name: Windows EXE
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reconstruct source archive
+        shell: pwsh
+        run: |
+          $parts = 1..4 | ForEach-Object { Get-Content "build-source/part$_.b64" -Raw }
+          [IO.File]::WriteAllBytes("source.zip", [Convert]::FromBase64String(($parts -join '')))
+          Expand-Archive -Path source.zip -DestinationPath src
+          $pkg = Get-ChildItem -Path src -Filter package.json -Recurse | Select-Object -First 1
+          if (-not $pkg) { throw "package.json not found" }
+          "PROJECT_ROOT=$($pkg.Directory.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: ${{ env.PROJECT_ROOT }}/package-lock.json
+        continue-on-error: true
+      - name: Install dependencies
+        shell: pwsh
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: npm install --no-audit --no-fund
+      - name: Run tests
+        shell: pwsh
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: npm test
+      - name: Build Windows installer
+        shell: pwsh
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: npm run windows:dist
+      - name: Collect EXE
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE/out/windows" | Out-Null
+          $exe = Get-ChildItem -Path "$env:PROJECT_ROOT/release-windows" -Filter *.exe -Recurse | Select-Object -First 1
+          if (-not $exe) { throw "Windows EXE not found" }
+          Copy-Item $exe.FullName "$env:GITHUB_WORKSPACE/out/windows/BonBazaar-v0.7.3-WINDOWS-Setup.exe"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BonBazaar-Windows-EXE
+          path: out/windows/BonBazaar-v0.7.3-WINDOWS-Setup.exe
+          if-no-files-found: error
+
+  android:
+    name: Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reconstruct source archive
+        run: |
+          cat build-source/part1.b64 build-source/part2.b64 build-source/part3.b64 build-source/part4.b64 | base64 -d > source.zip
+          unzip -q source.zip -d src
+          ROOT="$(dirname "$(find "$GITHUB_WORKSPACE/src" -name package.json | head -n1)")"
+          test -n "$ROOT"
+          echo "PROJECT_ROOT=$ROOT" >> "$GITHUB_ENV"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+      - name: Install Android SDK 36
+        run: yes | sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0" >/dev/null
+      - name: Install dependencies
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: npm install --no-audit --no-fund
+      - name: Run tests
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: npm test
+      - name: Generate Android project
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: npx cap add android
+      - name: Set Android 16 API 36
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import os,re
+          p=Path(os.environ['PROJECT_ROOT'])/'android'/'variables.gradle'
+          s=p.read_text()
+          s=re.sub(r'compileSdkVersion\s*=\s*\d+', 'compileSdkVersion = 36', s)
+          s=re.sub(r'targetSdkVersion\s*=\s*\d+', 'targetSdkVersion = 36', s)
+          p.write_text(s)
+          print(s)
+          PY
+          npx cap sync android
+      - name: Build installable APK
+        working-directory: ${{ env.PROJECT_ROOT }}/android
+        run: chmod +x gradlew && ./gradlew clean assembleDebug
+      - name: Collect APK
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/out/android"
+          test -f "$PROJECT_ROOT/android/app/build/outputs/apk/debug/app-debug.apk"
+          cp "$PROJECT_ROOT/android/app/build/outputs/apk/debug/app-debug.apk" "$GITHUB_WORKSPACE/out/android/Abonazaar-v0.7.3-ANDROID.apk"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Abonazaar-Android-APK
+          path: out/android/Abonazaar-v0.7.3-ANDROID.apk
+          if-no-files-found: error
