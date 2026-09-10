@@ -1,0 +1,108 @@
+name: Build BonBazaar Windows EXE + Abonazaar Android APK FINAL
+
+on:
+  push:
+    branches: [release/native-v0.7.3]
+
+jobs:
+  windows:
+    name: Windows EXE
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reconstruct exact source
+        shell: pwsh
+        run: |
+          $names = 'part1','part2','part3','part4a','part4b','part4c'
+          $parts = $names | ForEach-Object { Get-Content "build-source/$_.b64" -Raw }
+          [IO.File]::WriteAllBytes("source.zip", [Convert]::FromBase64String(($parts -join '')))
+          $hash=(Get-FileHash source.zip -Algorithm SHA256).Hash.ToLower()
+          if($hash -ne '150f3601e9e72bf4783a96a77aa08ae423375d42f8fd89330aa88dc460c89542'){ throw "Source SHA mismatch: $hash" }
+          Expand-Archive source.zip src
+          $pkg=Get-ChildItem src -Filter package.json -Recurse | Select-Object -First 1
+          if(-not $pkg){throw 'package.json not found'}
+          "PROJECT_ROOT=$($pkg.Directory.FullName)" | Out-File $env:GITHUB_ENV -Append
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install
+        shell: pwsh
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: npm install --no-audit --no-fund
+      - name: Tests
+        shell: pwsh
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: npm test
+      - name: Build native Windows installer
+        shell: pwsh
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: npm run windows:dist
+      - name: Collect EXE
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force out/windows | Out-Null
+          $exe=Get-ChildItem "$env:PROJECT_ROOT/release-windows" -Filter *.exe -Recurse | Select-Object -First 1
+          if(-not $exe){throw 'EXE not produced'}
+          Copy-Item $exe.FullName out/windows/BonBazaar-v0.7.3-WINDOWS-Setup.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BonBazaar-Windows-EXE
+          path: out/windows/BonBazaar-v0.7.3-WINDOWS-Setup.exe
+          if-no-files-found: error
+
+  android:
+    name: Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reconstruct exact source
+        run: |
+          cat build-source/part1.b64 build-source/part2.b64 build-source/part3.b64 build-source/part4a.b64 build-source/part4b.b64 build-source/part4c.b64 | base64 -d > source.zip
+          echo '150f3601e9e72bf4783a96a77aa08ae423375d42f8fd89330aa88dc460c89542  source.zip' | sha256sum -c -
+          unzip -q source.zip -d src
+          ROOT="$(dirname "$(find "$GITHUB_WORKSPACE/src" -name package.json | head -n1)")"
+          test -n "$ROOT"
+          echo "PROJECT_ROOT=$ROOT" >> "$GITHUB_ENV"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+      - name: Android SDK 36
+        run: yes | sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0" >/dev/null
+      - name: Install
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: npm install --no-audit --no-fund
+      - name: Tests
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: npm test
+      - name: Generate and sync Android
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: |
+          npx cap add android
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          p=Path('android/variables.gradle')
+          s=p.read_text()
+          s=re.sub(r'compileSdkVersion\s*=\s*\d+', 'compileSdkVersion = 36', s)
+          s=re.sub(r'targetSdkVersion\s*=\s*\d+', 'targetSdkVersion = 36', s)
+          p.write_text(s)
+          PY
+          npx cap sync android
+      - name: Build native APK
+        working-directory: ${{ env.PROJECT_ROOT }}/android
+        run: chmod +x gradlew && ./gradlew clean assembleDebug
+      - name: Collect APK
+        run: |
+          mkdir -p out/android
+          test -f "$PROJECT_ROOT/android/app/build/outputs/apk/debug/app-debug.apk"
+          cp "$PROJECT_ROOT/android/app/build/outputs/apk/debug/app-debug.apk" out/android/Abonazaar-v0.7.3-ANDROID.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Abonazaar-Android-APK
+          path: out/android/Abonazaar-v0.7.3-ANDROID.apk
+          if-no-files-found: error
