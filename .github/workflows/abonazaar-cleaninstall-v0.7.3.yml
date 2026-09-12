@@ -1,4 +1,4 @@
-name: Build Abonazaar v0.7.3 CLEAN INSTALL APK
+name: Build + launch-test Abonazaar v0.7.3 CLEAN INSTALL APK
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
 
 jobs:
   android-clean:
-    name: Android clean-install APK
+    name: Android build + real launch smoke test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -85,7 +85,7 @@ jobs:
         working-directory: ${{ env.PROJECT_ROOT }}/android
         run: chmod +x gradlew && ./gradlew clean assembleDebug
 
-      - name: Collect and hash APK
+      - name: Stage APK before device test
         run: |
           mkdir -p out/android
           APK="$PROJECT_ROOT/android/app/build/outputs/apk/debug/app-debug.apk"
@@ -94,10 +94,62 @@ jobs:
           sha256sum out/android/Abonazaar-v0.7.3-CLEAN-INSTALL.apk > out/android/SHA256.txt
           cat out/android/SHA256.txt
 
+      - name: Android 16 emulator install + launch + crash check
+        uses: ReactiveCircus/android-emulator-runner@v2
+        with:
+          api-level: 36
+          target: google_apis
+          arch: x86_64
+          profile: pixel_7
+          disable-animations: true
+          script: |
+            set -euxo pipefail
+            PKG='com.bonbazaar.abonazaar.release073'
+            APK="$GITHUB_WORKSPACE/out/android/Abonazaar-v0.7.3-CLEAN-INSTALL.apk"
+            adb install "$APK"
+            adb shell pm list packages | grep -F "package:$PKG"
+            adb logcat -c
+            adb shell am force-stop "$PKG"
+            adb shell monkey -p "$PKG" -c android.intent.category.LAUNCHER 1
+            sleep 8
+            PID="$(adb shell pidof "$PKG" | tr -d '\r' || true)"
+            echo "PID=$PID"
+            test -n "$PID"
+            adb shell dumpsys activity activities > "$GITHUB_WORKSPACE/out/android/dumpsys-activity.txt"
+            adb logcat -d > "$GITHUB_WORKSPACE/out/android/launch-logcat.txt"
+            if grep -E "FATAL EXCEPTION|Process: $PKG.*has died|Force finishing activity.*$PKG" "$GITHUB_WORKSPACE/out/android/launch-logcat.txt"; then
+              echo 'Launch crash detected' >&2
+              exit 1
+            fi
+            adb shell uiautomator dump /sdcard/window.xml || true
+            adb pull /sdcard/window.xml "$GITHUB_WORKSPACE/out/android/window.xml" || true
+            adb exec-out screencap -p > "$GITHUB_WORKSPACE/out/android/launch-screen.png"
+            test -s "$GITHUB_WORKSPACE/out/android/launch-screen.png"
+            echo 'REAL_LAUNCH_SMOKE_TEST=PASS'
+
+      - name: Final green gate
+        run: |
+          test -s out/android/Abonazaar-v0.7.3-CLEAN-INSTALL.apk
+          test -s out/android/SHA256.txt
+          test -s out/android/launch-logcat.txt
+          test -s out/android/launch-screen.png
+          printf '%s\n' \
+            'BUILD=PASS' \
+            'PACKAGE_ID=com.bonbazaar.abonazaar.release073' \
+            'ANDROID_16_INSTALL=PASS' \
+            'ANDROID_16_LAUNCH=PASS' \
+            'CRASH_CHECK=PASS' > out/android/FINAL-GREEN-GATE.txt
+          cat out/android/FINAL-GREEN-GATE.txt
+
       - uses: actions/upload-artifact@v4
         with:
-          name: Abonazaar-v0.7.3-CLEAN-INSTALL
+          name: Abonazaar-v0.7.3-LAUNCH-TESTED
           path: |
             out/android/Abonazaar-v0.7.3-CLEAN-INSTALL.apk
             out/android/SHA256.txt
+            out/android/FINAL-GREEN-GATE.txt
+            out/android/launch-logcat.txt
+            out/android/dumpsys-activity.txt
+            out/android/window.xml
+            out/android/launch-screen.png
           if-no-files-found: error
