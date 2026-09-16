@@ -2,14 +2,15 @@
 
 Status date: 2026-09-16
 Release candidate: BonBazaar / Abonazaar v0.7.3
+Verified CI commit: 2417f130c2b958664c3838f96c99462f9b4a8013
 
 ## Mission phase
 
-Project Moon has entered the Operation Moon Going Liftoff phase.
+Project Moon has entered the **Operation Moon Going Liftoff** phase.
 
 ## Verified launch gates
 
-### Windows
+### Windows — GREEN
 - Source reconstruction: PASS
 - Dependency install: PASS
 - Automated tests: PASS (12/12)
@@ -19,21 +20,31 @@ Project Moon has entered the Operation Moon Going Liftoff phase.
 - Application launch smoke test: PASS
 - Runtime process alive after 8 seconds: PASS
 - Launch evidence artifact: PASS
+- Verified release artifact upload: PASS
 
-### Android
+### Android — GREEN
 - Source reconstruction: PASS
 - Node setup: PASS
 - Java setup: PASS
-- Android SDK setup blocker fixed
-- Android SDK 36 setup: PASS
-- Final dependency/test/native APK gate: IN PROGRESS
+- Android SDK setup: PASS
+- Android SDK 36: PASS
+- Dependency install: PASS
+- Automated tests: PASS
+- Capacitor generate/sync: PASS
+- Native APK build: PASS
+- APK collection: PASS
+- Verified release artifact upload: PASS
 
-## Liftoff rule
+## Green-light status
 
-GO ONLINE is declared only when the final Android v0.7.3 job also completes successfully and the release artifacts are published from the verified commit. No older v0.7.0 installer may be presented as the v0.7.3 launch build.
+The native build and smoke-test gates for BonBazaar / Abonazaar v0.7.3 are GREEN.
+
+## Remaining public-launch action
+
+Publish the verified v0.7.3 Windows and Android artifacts from CI run 35043422172 on the chosen public distribution channel. Do not substitute the older v0.7.0 installer.
 
 ## Launch sequence
 
-GREEN LIGHT -> LAUNCH -> GO ONLINE
+**GREEN LIGHT -> LAUNCH -> GO ONLINE**
 
-The launch source of truth is the verified v0.7.3 release commit and its CI artifacts.
+The launch source of truth is CI commit `2417f130c2b958664c3838f96c99462f9b4a8013` and its verified artifacts.
