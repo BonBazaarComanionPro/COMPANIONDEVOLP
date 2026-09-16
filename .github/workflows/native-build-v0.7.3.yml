@@ -37,17 +37,58 @@ jobs:
         shell: pwsh
         working-directory: ${{ env.PROJECT_ROOT }}
         run: npm run windows:dist
+      - name: Install + launch smoke test
+        shell: pwsh
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $setup = Get-ChildItem 'release-windows' -Filter 'BonBazaar-v0.7.3-WINDOWS-Setup.exe' -Recurse | Select-Object -First 1
+          if(-not $setup){ throw 'BonBazaar v0.7.3 Setup.exe not found after build' }
+
+          $installer = Start-Process -FilePath $setup.FullName -ArgumentList '/S' -PassThru -Wait
+          if($installer.ExitCode -ne 0){ throw "Installer failed with exit code $($installer.ExitCode)" }
+
+          $programs = Join-Path $env:LOCALAPPDATA 'Programs'
+          $exe = Get-ChildItem $programs -Filter 'BonBazaar.exe' -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if(-not $exe){ throw "Installed BonBazaar.exe not found under $programs" }
+
+          $installedVersion = $exe.VersionInfo.ProductVersion
+          if($installedVersion -notmatch '^0\.7\.3([\.-]|$)'){
+            throw "Installed executable version mismatch: expected 0.7.3, got $installedVersion"
+          }
+
+          $app = Start-Process -FilePath $exe.FullName -PassThru
+          Start-Sleep -Seconds 8
+          if($app.HasExited){ throw "BonBazaar exited during launch smoke test with code $($app.ExitCode)" }
+
+          $setupHash = (Get-FileHash $setup.FullName -Algorithm SHA256).Hash.ToLower()
+          [pscustomobject]@{
+            status = 'PASS'
+            release_version = '0.7.3'
+            installed_product_version = $installedVersion
+            installer_sha256 = $setupHash
+            installed_exe = $exe.FullName
+            process_alive_after_seconds = 8
+            verified_at_utc = (Get-Date).ToUniversalTime().ToString('o')
+          } | ConvertTo-Json | Set-Content 'release-windows/WINDOWS-LAUNCH-EVIDENCE.json'
+
+          Stop-Process -Id $app.Id -Force -ErrorAction SilentlyContinue
       - name: Collect EXE
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force out/windows | Out-Null
-          $exe=Get-ChildItem "$env:PROJECT_ROOT/release-windows" -Filter *.exe -Recurse | Select-Object -First 1
+          $exe=Get-ChildItem "$env:PROJECT_ROOT/release-windows" -Filter 'BonBazaar-v0.7.3-WINDOWS-Setup.exe' -Recurse | Select-Object -First 1
           if(-not $exe){throw 'EXE not produced'}
           Copy-Item $exe.FullName out/windows/BonBazaar-v0.7.3-WINDOWS-Setup.exe
+          $evidence=Join-Path $env:PROJECT_ROOT 'release-windows/WINDOWS-LAUNCH-EVIDENCE.json'
+          if(-not (Test-Path $evidence)){throw 'Windows launch evidence not produced'}
+          Copy-Item $evidence out/windows/WINDOWS-LAUNCH-EVIDENCE.json
       - uses: actions/upload-artifact@v4
         with:
           name: BonBazaar-Windows-EXE
-          path: out/windows/BonBazaar-v0.7.3-WINDOWS-Setup.exe
+          path: |
+            out/windows/BonBazaar-v0.7.3-WINDOWS-Setup.exe
+            out/windows/WINDOWS-LAUNCH-EVIDENCE.json
           if-no-files-found: error
 
   android:
